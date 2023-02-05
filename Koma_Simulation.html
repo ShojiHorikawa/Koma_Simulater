@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="ja">
+    <head>
+        <title>独楽シミュレータ</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+        <style>
+          
+			body {
+				color: #61443e;
+				font-family:Monospace;
+				font-size:13px;
+				text-align:center;
+				
+				background-color: #bfd1e5;
+				margin: 0px;
+				overflow: hidden;
+			}
+
+			#info {
+				position: absolute;
+				top: 0px; width: 100%;
+				padding: 5px;
+			}
+			#color {
+				color: #ff7799;
+				top: 0px; width: 100%;
+				padding: 5px;
+			}
+			#canvas{
+				border:1px solid #000000;
+				background-color: #555555;
+			}
+        </style>
+		<script> 
+		/////////////////////////////////////////////////////////////////////////////////// 
+		//配列のグローバル変数はここで定義 //////////////////////////////////////////////////////
+			
+		</script>
+    </head>
+    <body>
+	
+	<div id="info">独楽シミュレータ(独楽の自動復活 有り)<br/><div id="color">
+		キーボードの「a」「d」キー:独楽が時計回り・反時計回りに回転 「s」キー:独楽リセット<br/>(キーを押し続けると綺麗に回転しません)</div>
+	<div id="container"></div> <!-- 表示領域 ID: container -->
+	
+	
+	<script src="jsPhysi/three.min.js"></script>		<!-- Web3D用ライブラリ -->
+	<script src="jsPhysi/OrbitControls.js"></script>	<!-- 視点回転用ライブラリ -->
+	<script src="jsPhysi/Detector.js"></script>		<!-- Webglチェック用ライブラリ -->
+	<script src="jsPhysi/stats.min.js"></script>		<!-- FPSチェック用ライブラリ -->
+
+	<script type="text/javascript" src="jsPhysi/physi.js"></script>	<!-- Physijsライブラリ -->
+	
+        <script>
+		
+		// 物理エンジン　ライブラリの読み込み	
+		Physijs.scripts.worker = 'physijs_worker.js';		//ローカルで実行する場合、HTMLファイルと同階層
+		Physijs.scripts.ammo = 'jsPhysi/ammo.js';
+
+
+		// webglが利用できるかをチェック
+		if ( ! Detector.webgl ) {
+		    Detector.addGetWebGLMessage();
+		    document.getElementById( 'container' ).innerHTML = "";
+		}
+
+		
+		///////////////////////////////////////////////////////////////////////////////////
+		//グローバル変数
+		///////////////////////////////////////////////////////////////////////////////////
+		let loader,
+		ground_material,
+		renderer, scene, ground, camera, ball;
+
+		let container, stats;
+		let controls;
+
+		
+		const clock = new THREE.Clock();
+		let time = 0; //時刻
+
+		let PassageTime = true;
+		
+		// 周囲
+		const bowls = [];
+		
+		// 独楽用
+		const Koma_material = [];
+		const Used_KomaMaterial = [];
+		const circle = [];
+		const circle_top = [];
+		const Koma_constraint = [];
+		let Koma_posY = 35;
+
+
+		// オブジェクトの表示座標に用いる変数
+		let long = 71.5;
+		let ang = 0;
+
+
+		// - Main code -
+
+		init();
+		animate();
+
+
+		// - Functions -
+
+		function init() {
+
+			initGraphics();
+			initObjects();
+			initInput();
+
+		}
+
+
+		
+
+
+		///////////////////////////////////////////////////////////////////////////////////
+		//WebGLの準備
+		function initGraphics() {
+			//初期設定
+			renderer = new THREE.WebGLRenderer();
+			renderer.setClearColor( 0xbfd1e5 );　//バックカラー（空色）
+			renderer.setPixelRatio( window.devicePixelRatio );
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			renderer.shadowMap.enabled = true;
+			//表示領域の指定
+			container = document.getElementById( 'container' );
+			container.innerHTML = "";
+			container.appendChild( renderer.domElement );
+			
+
+			////////////////////////////////////////////////////
+			//////////////物理シーンの作成と重力の設定///////////////
+			////////////////////////////////////////////////////
+			//sceneはPhysijsで作成する
+			scene = new Physijs.Scene;
+			//重力ベクトルを設定する
+			scene.setGravity(new THREE.Vector3( 0, -98, 0 ));
+
+
+
+			////////////////////////////////////////////////////
+			///////////////////シーンの各種設定////////////////////
+			////////////////////////////////////////////////////
+
+			//////////////////////////////
+			//カメラの設定
+			///////////////////
+			//透視投影カメラ作成
+			camera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 0.2, 2000 );
+			//カメラの初期位置
+			camera.position.set(100,200,0);
+			// camera.position.set(-100,45,50);
+			
+
+			//////////////////////////////
+			//光源の設定
+			///////////////////
+			//環境光
+			const ambientLight = new THREE.AmbientLight( 0x404040 );
+			scene.add( ambientLight );
+			//平行光源（影あり）
+			const light = new THREE.DirectionalLight( 0xffffff, 1 );
+			light.position.set( -70, 100, 150 );
+			light.castShadow = true;
+			const d = 80;
+			light.shadow.camera.left = -d;
+			light.shadow.camera.right = d;
+			light.shadow.camera.top = d;
+			light.shadow.camera.bottom = -d;
+			light.shadow.camera.near = 2;
+			light.shadow.camera.far = 300;
+			light.shadow.mapSize.x = 1024;
+			light.shadow.mapSize.y = 1024;
+			light.shadow.bias = -0.003;
+			scene.add( light );
+
+
+
+			//////////////////////////////
+			//その他の設定
+			///////////////////
+		
+			//FPS表示用セット
+			stats = new Stats();
+			stats.domElement.style.position = 'absolute';
+			stats.domElement.style.top = '0px';
+			container.appendChild( stats.domElement );
+
+
+			// マウスによるカメラ回転
+			controls = new THREE.OrbitControls( camera, renderer.domElement );
+			controls.target.y = 2;
+			controls.addEventListener( 'change', render );
+			
+
+			//イベントリスナ
+			window.addEventListener( 'resize', onWindowResize, false );
+
+		}
+
+
+		///////////////////////////////////////////////////////////////////////////////////
+		//（リセットボタンがないので）起動時の処理
+		function initObjects() {
+		
+			// テクスチャを読み込むためのオブジェクト作成
+			loader = new THREE.TextureLoader();
+
+
+			//////////////////////////////
+			//マテリアルの設定（色や材質の他、摩擦係数や反発係数もマテリアルになる）
+			///////////////////
+			ground_material = Physijs.createMaterial(
+				// new THREE.MeshLambertMaterial({color: 0x0000ff}),
+				new THREE.MeshLambertMaterial({map: loader.load('jsPhysi/plastics.jpg')}),
+				0, // 摩擦
+				2.0// 反発
+			);
+			// 球体用のマテリアル「Physijsで作成する(摩擦係数と反発係数をパラメータとして入力する)」
+			ball_material = Physijs.createMaterial(
+				new THREE.MeshLambertMaterial({color: 0xbbee33}), 
+				0, // 摩擦
+				0.9 // 反発
+			);
+
+			// 針用のマテリアル
+			pin_material = Physijs.createMaterial(
+				new THREE.MeshLambertMaterial({color: 0x929292}), 
+				0, // 摩擦
+				0.5 // 反発
+			);
+
+			// こま用のマテリアル
+			for(let i=0;i<8;i++){
+				Koma_material[i] = Physijs.createMaterial(
+					new THREE.MeshLambertMaterial({map: loader.load('jsPhysi/Koma' + i + '.png')}), 
+					0, // 摩擦
+					2.37 // 反発
+				);
+			}
+
+			// 試験用のマテリアル(反発が0)
+			Demo_material = Physijs.createMaterial(
+					new THREE.MeshLambertMaterial({map: loader.load('jsPhysi/Koma' + 0 + '.png')}), 
+					0, // 摩擦
+					0 // 反発
+			);
+
+
+			
+			//////////////////////////////
+			//オブジェクトの設定（形とマテリアルの指定の他、質量も含める）
+			///////////////////
+			///////////////
+			// 土台
+			ground = new Physijs.CylinderMesh(
+			new THREE.CylinderGeometry(25, 15, 3, 100), // 上円半径,下円半径,厚さ,n角形 の角錐で床1を作成
+				ground_material,
+				0 //質量 0 で動かない物体とする
+			);
+			
+			ground.receiveShadow = true;
+			scene.add( ground );
+
+			// 坂道
+			for (let i=0; i<180; i++){
+				bowls[i] = new Physijs.CylinderMesh(
+					new THREE.BoxGeometry(100, 0.3, 5),	//棒状の円柱でピンを作成 
+					ground_material,					//pin用の材質を利用（反発係数や摩擦係数）
+					0								//質量0.01で軽い物体
+				);
+				bowls[i].castShadow = true;		//影が投影される
+				bowls[i].receiveShadow = true;		//影が投影される
+				bowls[i].rotation.z = 20 * (Math.PI /180); // 板を長辺とした三角形の底辺は93.969262078591
+			}
+
+			for(let i=0; i<bowls.length; i++){
+				ang = 360 * (i/bowls.length)
+				bowls[i].position.set(long*Math.sin((90-ang)*(Math.PI /180)),18.45,long*Math.cos((90-ang)*(Math.PI /180)));        //ピンの位置
+				bowls[i].rotation.y = -ang * (Math.PI /180);
+				scene.add( bowls[i] );
+			}
+			
+			///////////////////
+			// 独楽
+
+			let circle_range = 15;
+			let Koma_count = 3;
+
+			for (let i=0; i<Koma_count; i++){
+				selectKomaMaterial(i);
+
+				circle_top[i] = new Physijs.CylinderMesh(
+					new THREE.CylinderGeometry(circle_range, circle_range, 2, 50), // 上円半径,下円半径,厚さ,n角形 の角錐で床1を作成
+				// new THREE.BoxGeometry(30, 2, 30),
+					Koma_material[Used_KomaMaterial[i]],
+					0.1 //質量 0 で動かない物体とする
+				);
+				circle_top[i].receiveShadow = true;
+				circle_top[i].castShadow = true;
+
+				circle[i] = new Physijs.CylinderMesh(
+					new THREE.CylinderGeometry(circle_range, 1, 7, 50), // 上円半径,下円半径,厚さ,n角形 の角錐で床1を作成
+					Koma_material[Used_KomaMaterial[i]],
+					1 //質量 0 で動かない物体とする
+				);
+				circle[i].receiveShadow = true;
+				circle[i].castShadow = true;
+			}
+			
+
+			for (let i=0; i<circle.length; i++){
+				ang = 360 * (i/circle.length)
+				circle_top[i].position.set(long*Math.sin((90-ang)*(Math.PI /180)),Koma_posY+4.5,long*Math.cos((90-ang)*(Math.PI /180)));
+				circle[i].position.set(long*Math.sin((90-ang)*(Math.PI /180)),Koma_posY,long*Math.cos((90-ang)*(Math.PI /180)));
+				scene.add( circle_top[i] );
+				scene.add( circle[i] );
+			}
+			
+/*
+			// 針
+			pin1 = new Physijs.CylinderMesh(
+			new THREE.CylinderGeometry(0.3, 0.3, 3, 50), // 上円半径,下円半径,厚さ,n角形 の角錐で床1を作成
+			// new THREE.CylinderGeometry(0.3, 0.3, 17, 50), // 上円半径,下円半径,厚さ,n角形 の角錐で床1を作成
+				pin_material,
+				5 //質量 0 で動かない物体とする
+			);
+			pin1.receiveShadow = true;
+			pin1.castShadow = true;
+			pin1.position.y =19;
+			// pin1.position.x =15;
+			scene.add(pin1);
+
+			pin2 = new Physijs.CylinderMesh(
+			new THREE.CylinderGeometry(0.3, 0.3, 2, 50), // 上円半径,下円半径,厚さ,n角形 の角錐で床1を作成
+				pin_material,
+				0.1 //質量 0 で動かない物体とする
+			);
+			pin2.receiveShadow = true;
+			pin2.castShadow = true;
+			pin2.position.y = 7.5;
+			scene.add(pin2);
+*/
+
+
+			for (let i=0; i<circle.length; i++){
+				Koma_constraint[i] = new Physijs.DOFConstraint(//DOF 拘束は、3 軸すべてを軸毎にコントロールできる
+					circle_top[i],//第 1 引数は拘束したい 1 つ目のオブジェクト
+					circle[i],//第 2 引数は拘束したい 2 つ目のオブジェクト。
+					circle_top[i].position
+				);
+				scene.addConstraint(Koma_constraint[i]);
+				//Y 軸,Z 軸の回転を 0 にすることで不許可にし,x 軸の回転範囲を-180°~180°に制限
+			}
+			
+
+			///////////////////
+			//軸オブジェクトの生成(原点からXYZ軸に色付きの直線を表示)		
+			const axis = new THREE.AxisHelper(30);
+			scene.add(axis);	//シーンに追加
+
+		}
+
+
+
+
+
+
+		///////////////////////////////////////////////////////////////////////////////////
+		//アニメーションの処理
+		function animate() {
+
+			requestAnimationFrame( animate );//無限ループ
+			render();
+			stats.update();
+			
+			// 場外・転倒の判定
+			dropOutChack();
+
+			//////////////////////////////
+			//キーボード操作
+			///////////////////
+			
+			document.addEventListener(
+			'keydown',//キーを押し下げたとき(モーターON)
+				function( ev ) {
+					switch( ev.keyCode ) {
+						case 65:
+							// a:
+							for(let i=0; i<circle.length; i++){
+								Koma_constraint[i].configureAngularMotor( 1, 1 , 0 , i%2==0?100:-100, 100);//モーターの設定
+									//第1引数:回転軸(0:X軸 1:Y軸 2:Z軸)
+									//第2引数:モータの下限角度 第3引数:モータの上限角度
+									//第4引数:速度
+									//第5引数:最大力(加速度)
+								Koma_constraint[i].enableAngularMotor( 1 );//モーターON 引数:回転軸(0:X 軸 1:Y 軸 2:Z 軸)
+							}
+							break;
+						case 68:
+							// d:
+							for(let i=0; i<circle.length; i++){
+								Koma_constraint[i].configureAngularMotor( 1, 1 , 0 , i%2==0?-100:100, 100);
+								Koma_constraint[i].enableAngularMotor( 1 );
+							}
+							break;
+					}
+				}
+			);
+			document.addEventListener( 'keyup',//キーを離したとき(モーターOFF)
+				function( ev ) {
+					switch( ev.keyCode ) {
+						case 65:
+							// a:
+							for(let i=0; i<circle.length; i++){
+								Koma_constraint[i].disableAngularMotor( 1 );//モーターOFF 引数:回転軸(0:X 1:Y 2:Z)
+							}
+							break;
+						case 68:
+							// d:
+							for(let i=0; i<circle.length; i++){
+								Koma_constraint[i].disableAngularMotor( 1 );
+							}
+							break;
+						case 83:
+							// s:
+							// 全ての独楽でremakeKoma関数を起動させる
+							for(let i=0; i<circle.length; i++){
+								remakeKoma(i);
+							}
+
+							// 独楽がひっくり返った時にリセットされるかどうかの確認用
+							// demoMake();
+							break;
+					}
+				}
+			);
+			
+
+			
+
+			
+			//シミュレート開始
+			scene.simulate();
+
+		}
+
+		function render() {
+
+			const deltaTime = clock.getDelta();//　時間の変化量を取得
+			renderer.render( scene, camera );
+			
+			if(PassageTime == true){
+				let beforeTime = time;
+				time += deltaTime; //時間の変化量をtimeに加算することで現在時刻を生成
+			}
+		
+		}
+
+		///////////////////////////////////////////////////////////////////////////////////
+		//ウインドウサイズ変更の時の処理	
+		function onWindowResize() {
+
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize( window.innerWidth, window.innerHeight );
+
+		}
+
+		///////////////////////////////////////////////////////////////////////////////////
+		//キー入力などの処理	
+		function initInput() {
+
+		}
+
+		function dropOutChack() {
+			for(let i=0; i<Koma_constraint.length;i++){
+				if(circle_top[i].position.y < -100 || circle[i].position.y < -100){
+					// 場外
+					remakeKoma(i);
+				} else if(circle_top[i].position.y < 4 && circle_top[i].position.y < circle[i].position.y-1.5){
+					// ひっくり返った時
+					remakeKoma(i);
+				}
+
+			}
+			
+		}
+
+		function remakeKoma(i) {
+			scene.remove(circle_top[i]);
+			scene.remove(circle[i]);
+			scene.removeConstraint(Koma_constraint[i]);
+
+
+
+			selectKomaMaterial(i);
+			circle_top[i] = new Physijs.CylinderMesh(
+				new THREE.CylinderGeometry(15, 15, 2, 50), // 上円半径,下円半径,厚さ,n角形 の角錐で床1を作成
+			// new THREE.BoxGeometry(30, 2, 30),
+				Koma_material[Used_KomaMaterial[i]],
+				0.1 //質量 0 で動かない物体とする
+			);
+			circle_top[i].receiveShadow = true;
+			circle_top[i].castShadow = true;
+
+			circle[i] = new Physijs.CylinderMesh(
+				new THREE.CylinderGeometry(15, 1, 7, 50), // 上円半径,下円半径,厚さ,n角形 の角錐で床1を作成
+				Koma_material[Used_KomaMaterial[i]],
+				1 //質量 0 で動かない物体とする
+			);
+			
+			
+			long = 71.5
+			ang = 360 * (i/circle.length)
+			circle_top[i].position.set(long*Math.sin((90-ang)*(Math.PI /180)),Koma_posY+4.5,long*Math.cos((90-ang)*(Math.PI /180)));
+			circle_top[i].rotation.set(0,0,0);
+			circle[i].position.set(long*Math.sin((90-ang)*(Math.PI /180)),Koma_posY,long*Math.cos((90-ang)*(Math.PI /180)));
+			circle[i].rotation.set(0,0,0);
+			scene.add( circle_top[i] );
+			scene.add( circle[i] );
+
+			
+
+			Koma_constraint[i] = new Physijs.DOFConstraint(//DOF 拘束は、3 軸すべてを軸毎にコントロールできる
+				circle_top[i],//第 1 引数は拘束したい 1 つ目のオブジェクト
+				circle[i],//第 2 引数は拘束したい 2 つ目のオブジェクト。
+				//省略するとシーンに対して拘束され結果的に第 3 引数の座標で拘束される
+				circle_top[i].position
+			);
+			scene.addConstraint(Koma_constraint[i]);
+		}
+
+		// 独楽が反転した状態でリセットされるのか確認するための処理
+		function demoMake(){
+			for(let i=0; i<circle.length; i++){
+				scene.remove(circle_top[i]);
+				scene.remove(circle[i]);
+				scene.removeConstraint(Koma_constraint[i]);
+
+
+
+				selectKomaMaterial(i);
+				circle_top[i] = new Physijs.CylinderMesh(
+					new THREE.CylinderGeometry(15, 15, 2, 50), // 上円半径,下円半径,厚さ,n角形 の角錐で床1を作成
+				// new THREE.BoxGeometry(30, 2, 30),
+					Demo_material,
+					0.1 //質量 0 で動かない物体とする
+				);
+				circle_top[i].receiveShadow = true;
+				circle_top[i].castShadow = true;
+
+				circle[i] = new Physijs.CylinderMesh(
+					new THREE.CylinderGeometry(15, 1, 7, 50), // 上円半径,下円半径,厚さ,n角形 の角錐で床1を作成
+					Demo_material,
+					1 //質量 0 で動かない物体とする
+				);
+				
+				
+				long = 71.5
+				ang = 360 * (i/circle.length)
+				circle_top[i].position.set(long*Math.sin((90-ang)*(Math.PI /180)),Koma_posY+4.5,long*Math.cos((90-ang)*(Math.PI /180)));
+				circle_top[i].rotation.set(0,0,0);
+				circle[i].position.set(long*Math.sin((90-ang)*(Math.PI /180)),Koma_posY,long*Math.cos((90-ang)*(Math.PI /180)));
+				circle[i].rotation.set(0,0,0);
+
+				
+				circle_top[i].position.y = Koma_posY;
+				circle_top[i].rotation.x = Math.PI;
+				circle[i].position.y = Koma_posY+4.5;
+				circle[i].rotation.x = Math.PI;
+
+				scene.add( circle_top[i] );
+				scene.add( circle[i] );
+
+				
+
+				Koma_constraint[i] = new Physijs.DOFConstraint(//DOF 拘束は、3 軸すべてを軸毎にコントロールできる
+					circle_top[i],//第 1 引数は拘束したい 1 つ目のオブジェクト
+					circle[i],//第 2 引数は拘束したい 2 つ目のオブジェクト。
+					//省略するとシーンに対して拘束され結果的に第 3 引数の座標で拘束される
+					circle_top[i].position
+				);
+				scene.addConstraint(Koma_constraint[i]);
+			}
+		}
+
+		// 独楽の模様が被らない処理
+		function selectKomaMaterial(i){
+			if(i <= Koma_material.length){
+				let loopBool = true;
+
+				while(loopBool == true){
+					Used_KomaMaterial[i] = Math.floor(Math.random() * (Koma_material.length));
+
+					loopBool = false;
+					for(let j=0; j<Used_KomaMaterial.length;j++){
+						if(j!=i && Used_KomaMaterial[i] == Used_KomaMaterial[j]){
+								loopBool = true;
+						}
+					}
+				}
+			} else {
+				Used_KomaMaterial[i] = Math.floor(Math.random() * (Koma_material.length));
+			}
+		}
+
+
+        </script>
+
+    </body>
+</html>
